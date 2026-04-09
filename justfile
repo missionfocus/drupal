@@ -19,7 +19,7 @@ list:
     for site in sites/*/; do
         name=$(basename "$site")
         port=$(cat "sites/$name/port" 2>/dev/null || echo "?")
-        if ls "sites/$name/files/"*.sqlite 2>/dev/null | grep -q .; then
+        if grep -q '\$databases' "sites/$name/settings.php" 2>/dev/null; then
             echo "  $name → http://localhost:$port"
         else
             echo "  $name → http://localhost:$port  (needs installer)"
@@ -38,10 +38,9 @@ new name="default":
         [ -f "$p" ] && port=$(cat "$p") && [ "$port" -gt "$max" ] && max=$port
     done
     port=$((max + 1))
-    mkdir -p "sites/{{name}}/files"
+    mkdir -p "sites/{{name}}"
     touch "sites/{{name}}/settings.php"
     echo "$port" > "sites/{{name}}/port"
-    chmod 777 "sites/{{name}}/files"
     chmod 666 "sites/{{name}}/settings.php"
     echo "Created '{{name}}' on port $port — run: just up {{name}}"
 
@@ -84,8 +83,8 @@ up site="":
     fi
     port=$(cat "sites/$site/port")
     {{runtime}} rm -f "drupal-$site" 2>/dev/null || true
-    trap "{{runtime}} rm -f drupal-$site 2>/dev/null || true" EXIT
-    if ls "sites/$site/files/"*.sqlite 2>/dev/null | grep -q .; then
+    trap "{{runtime}} stop drupal-$site 2>/dev/null; {{runtime}} rm drupal-$site 2>/dev/null || true" EXIT
+    if grep -q '\$databases' "sites/$site/settings.php" 2>/dev/null; then
         echo "Starting $site → http://localhost:$port  (Ctrl+C to stop)"
     else
         echo ""
@@ -94,10 +93,13 @@ up site="":
         echo "  Database type: SQLite  |  Database path: accept the default"
         echo ""
     fi
+    {{runtime}} run --rm \
+        --volume "drupal-$site-files:/var/www/html/sites/default/files" \
+        {{image}} chmod 777 /var/www/html/sites/default/files
     {{runtime}} run \
         --name "drupal-$site" \
         --publish "$port:80" \
-        --volume "$(pwd)/sites/$site/files:/var/www/html/sites/default/files" \
+        --volume "drupal-$site-files:/var/www/html/sites/default/files" \
         --volume "$(pwd)/sites/$site/settings.php:/var/www/html/sites/default/settings.php" \
         {{image}}
 
@@ -123,6 +125,7 @@ erase name:
     read answer
     if [ "$answer" = "yes" ]; then
         {{runtime}} rm -f "drupal-{{name}}" 2>/dev/null || true
+        {{runtime}} volume rm "drupal-{{name}}-files" 2>/dev/null || true
         rm -rf "sites/{{name}}"
         echo "Site '{{name}}' erased."
     else
@@ -137,7 +140,9 @@ erase-all:
     if [ "$answer" = "yes" ]; then
         if [ -d sites ]; then
             for site in sites/*/; do
-                {{runtime}} rm -f "drupal-$(basename "$site")" 2>/dev/null || true
+                name=$(basename "$site")
+                {{runtime}} rm -f "drupal-$name" 2>/dev/null || true
+                {{runtime}} volume rm "drupal-$name-files" 2>/dev/null || true
             done
         fi
         rm -rf sites/
