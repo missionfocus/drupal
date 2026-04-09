@@ -42,6 +42,10 @@ new name="default":
     touch "sites/{{name}}/settings.php"
     echo "$port" > "sites/{{name}}/port"
     chmod 666 "sites/{{name}}/settings.php"
+    if [ "{{runtime}}" = "podman" ]; then
+        mkdir -p "sites/{{name}}/files"
+        chmod 777 "sites/{{name}}/files"
+    fi
     echo "Created '{{name}}' on port $port — run: just up {{name}}"
 
 # pull the latest image
@@ -93,15 +97,24 @@ up site="":
         echo "  Database type: SQLite  |  Database path: accept the default"
         echo ""
     fi
-    {{runtime}} run --rm \
-        --volume "drupal-$site-files:/var/www/html/sites/default/files" \
-        {{image}} chmod 777 /var/www/html/sites/default/files
-    {{runtime}} run \
-        --name "drupal-$site" \
-        --publish "$port:80" \
-        --volume "drupal-$site-files:/var/www/html/sites/default/files" \
-        --volume "$(pwd)/sites/$site/settings.php:/var/www/html/sites/default/settings.php" \
-        {{image}}
+    if [ "{{runtime}}" = "podman" ]; then
+        {{runtime}} run \
+            --name "drupal-$site" \
+            --publish "$port:80" \
+            --volume "$(pwd)/sites/$site/files:/var/www/html/sites/default/files" \
+            --volume "$(pwd)/sites/$site/settings.php:/var/www/html/sites/default/settings.php" \
+            {{image}}
+    else
+        {{runtime}} run --rm \
+            --volume "drupal-$site-files:/var/www/html/sites/default/files" \
+            {{image}} chmod 777 /var/www/html/sites/default/files
+        {{runtime}} run \
+            --name "drupal-$site" \
+            --publish "$port:80" \
+            --volume "drupal-$site-files:/var/www/html/sites/default/files" \
+            --volume "$(pwd)/sites/$site/settings.php:/var/www/html/sites/default/settings.php" \
+            {{image}}
+    fi
 
 # stop a leftover container (use if a previous run didn't clean up)
 down site="":
@@ -125,7 +138,9 @@ erase name:
     read answer
     if [ "$answer" = "yes" ]; then
         {{runtime}} rm -f "drupal-{{name}}" 2>/dev/null || true
-        {{runtime}} volume rm "drupal-{{name}}-files" 2>/dev/null || true
+        if [ "{{runtime}}" != "podman" ]; then
+            {{runtime}} volume rm "drupal-{{name}}-files" 2>/dev/null || true
+        fi
         rm -rf "sites/{{name}}"
         echo "Site '{{name}}' erased."
     else
@@ -142,7 +157,9 @@ erase-all:
             for site in sites/*/; do
                 name=$(basename "$site")
                 {{runtime}} rm -f "drupal-$name" 2>/dev/null || true
-                {{runtime}} volume rm "drupal-$name-files" 2>/dev/null || true
+                if [ "{{runtime}}" != "podman" ]; then
+                    {{runtime}} volume rm "drupal-$name-files" 2>/dev/null || true
+                fi
             done
         fi
         rm -rf sites/
